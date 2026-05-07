@@ -40,7 +40,7 @@
     <span style="margin-left:auto;font-size:9px;color:#1e3a4a;background:#0a1a27;padding:2px 7px;border-radius:10px">📡 Yahoo Finance</span>
   </div>
   <div style="display:flex;gap:8px">
-    <input id="qinput" placeholder="종목명·코드 (삼성전자, TSLA, 005930)"
+    <input id="qinput" placeholder="종목명·코드 (삼성전자, 005930, 051980, TSLA)"
       style="flex:1;padding:11px 12px;border-radius:10px;border:1px solid #0d2535;background:#060f1a;color:#cfe8f0;font-size:12px"
       onkeydown="if(event.key==='Enter')doSearch()">
     <button id="search-btn" onclick="doSearch()"
@@ -54,12 +54,12 @@
 <div id="loading-box">
   <div class="spinner"></div>
   <div id="loading-msg" style="color:#456070;font-size:12px">데이터 가져오는 중...</div>
-  <div style="color:#1e3a4a;font-size:10px;margin-top:6px">한국 · 미국 · 전 세계 주식 지원</div>
+  <div style="color:#1e3a4a;font-size:10px;margin-top:6px">한국 주식·ETF · 미국 주식 지원</div>
 </div>
 
 <div id="error-box">
   <div style="color:#ff5252;font-size:12px;font-weight:700;margin-bottom:6px">⚠️ <span id="err-msg"></span></div>
-  <div style="color:#ff525288;font-size:10px;margin-bottom:10px">팁: 삼성전자, 005930, AAPL, TSLA 형식으로 검색하세요.</div>
+  <div style="color:#ff525288;font-size:10px;margin-bottom:10px">팁: 삼성전자, 005930, 051980, AAPL 형식으로 검색하세요.</div>
   <button onclick="doSearch()" style="padding:7px 14px;border-radius:8px;border:1px solid #ff5252;background:transparent;color:#ff5252;font-size:11px">다시 시도</button>
 </div>
 
@@ -77,8 +77,9 @@
   </div>
   <div style="margin-top:14px;padding:12px;background:#0a1a27;border-radius:12px;border:1px solid #0d2535;font-size:10px;color:#456070;line-height:1.8">
     📡 <strong style="color:#00e5ff">실제 주가 데이터</strong> 연동 (Yahoo Finance)<br>
-    🇰🇷 한국: 종목명 또는 6자리 코드 (005930)<br>
-    🇺🇸 미국·해외: 영문 티커 (AAPL, TSLA, NVDA)
+    🇰🇷 한국: 종목명 또는 코드 (005930, 051980, 0005D0)<br>
+    🇺🇸 미국·해외: 영문 티커 (AAPL, TSLA, NVDA)<br>
+    💡 코스닥·ETF 코드도 자동 인식 (KS→KQ 자동 재시도)
   </div>
 </div>
 
@@ -120,7 +121,18 @@ const BASE_PRICES={
   '323410.KS':35000,'051910.KS':380000,'207940.KS':950000,'012330.KS':280000,
   'NVDA':110,'TSLA':240,'AAPL':210,'MSFT':420,'GOOGL':160,'META':560,'AMZN':190
 };
-function resolveTicker(q){const k=q.trim().toLowerCase().replace(/\s+/g,'');if(TMAP[k])return TMAP[k];for(const[key,val]of Object.entries(TMAP)){if(k.includes(key)||key.includes(k))return val;}if(/^\d{6}$/.test(q.trim()))return q.trim()+'.KS';return q.trim().toUpperCase();}
+
+// 티커 해석: TMAP → 이미 .KS/.KQ 붙은 경우 → 영숫자 5~6자리 → 그외
+function resolveTicker(q){
+  const k=q.trim().toLowerCase().replace(/\s+/g,'');
+  if(TMAP[k])return TMAP[k];
+  for(const[key,val]of Object.entries(TMAP)){if(k.includes(key)||key.includes(k))return val;}
+  if(/\.(KS|KQ)$/i.test(q.trim()))return q.trim().toUpperCase();
+  // 숫자 또는 영숫자 혼합 5~6자리 → 한국 코드 추정, .KS 먼저 (실패 시 tryFetchYahoo 에서 .KQ 재시도)
+  if(/^[A-Za-z0-9]{5,6}$/.test(q.trim()))return q.trim().toUpperCase()+'.KS';
+  return q.trim().toUpperCase();
+}
+
 function sma(d,p){return d.map((_,i)=>i<p-1?null:d.slice(i-p+1,i+1).reduce((s,v)=>s+v,0)/p);}
 function ema(d,p){const k=2/(p+1),r=[d[0]];for(let i=1;i<d.length;i++)r.push(d[i]*k+r[i-1]*(1-k));return r;}
 function rsi(d,p=14){const r=Array(p).fill(null);let ag=0,al=0;for(let i=1;i<=p;i++){const x=d[i]-d[i-1];x>0?ag+=x:al-=x;}ag/=p;al/=p;r.push(al===0?100:100-100/(1+ag/al));for(let i=p+1;i<d.length;i++){const x=d[i]-d[i-1];ag=(ag*(p-1)+Math.max(x,0))/p;al=(al*(p-1)+Math.max(-x,0))/p;r.push(al===0?100:100-100/(1+ag/al));}return r;}
@@ -134,60 +146,38 @@ function score(closes,vols){const last=closes[closes.length-1];const s5=sma(clos
 
 function fetchWithTimeout(url,ms){const controller=new AbortController();const tid=setTimeout(()=>controller.abort(),ms);return fetch(url,{signal:controller.signal}).then(r=>{clearTimeout(tid);return r;}).catch(e=>{clearTimeout(tid);throw e;});}
 
-function parseYahooResult(data, ticker) {
-  const result = data?.chart?.result?.[0];
-  if (!result) return null;
-  const ts=result.timestamp, q=result.indicators.quote[0], meta=result.meta;
+function parseYahooResult(data,ticker){
+  const result=data?.chart?.result?.[0];
+  if(!result)return null;
+  const ts=result.timestamp,q=result.indicators.quote[0],meta=result.meta;
   const valid=ts.map((t,i)=>({o:q.open[i],h:q.high[i],l:q.low[i],c:q.close[i],v:q.volume[i]})).filter(d=>d.c!=null&&d.v!=null&&d.v>0);
-  if (valid.length < 15) return null;
+  if(valid.length<15)return null;
   const recent=valid.slice(-100);
   const isKr=ticker.endsWith('.KS')||ticker.endsWith('.KQ');
-  return {
-    name:meta.longName||meta.shortName||ticker, ticker, isKr,
-    market:isKr?(ticker.endsWith('.KQ')?'KOSDAQ':'KOSPI'):'해외',
-    cur:meta.regularMarketPrice||recent[recent.length-1].c,
-    prev:meta.previousClose||recent[recent.length-2].c,
-    h52:meta.fiftyTwoWeekHigh, l52:meta.fiftyTwoWeekLow,
-    closes:recent.map(d=>d.c), volumes:recent.map(d=>d.v),
-    candles:recent.map(d=>({o:d.o||d.c,h:d.h||d.c,l:d.l||d.c,c:d.c})),
-    len:recent.length, simulated:false
-  };
+  return{name:meta.longName||meta.shortName||ticker,ticker,isKr,market:isKr?(ticker.endsWith('.KQ')?'KOSDAQ':'KOSPI'):'해외',cur:meta.regularMarketPrice||recent[recent.length-1].c,prev:meta.previousClose||recent[recent.length-2].c,h52:meta.fiftyTwoWeekHigh,l52:meta.fiftyTwoWeekLow,closes:recent.map(d=>d.c),volumes:recent.map(d=>d.v),candles:recent.map(d=>({o:d.o||d.c,h:d.h||d.c,l:d.l||d.c,c:d.c})),len:recent.length,simulated:false};
 }
 
-async function tryFetchYahoo(ticker) {
-  const end=Math.floor(Date.now()/1000);
-  const start=end-60*60*24*130;
-  const enc=encodeURIComponent;
+async function fetchOneTicker(ticker){
+  const end=Math.floor(Date.now()/1000),start=end-60*60*24*130,enc=encodeURIComponent;
   const y1=`https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&period1=${start}&period2=${end}`;
   const y2=`https://query2.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&period1=${start}&period2=${end}`;
+  // 0순위: Vercel 서버리스
+  try{const resp=await fetchWithTimeout(`/api/stock?ticker=${enc(ticker)}`,10000);if(resp.ok){const d=await resp.json();const p=parseYahooResult(d,ticker);if(p)return p;}}catch(e){}
+  // 1순위~: 외부 프록시
+  const proxies=[`https://api.allorigins.win/get?url=${enc(y1)}`,`https://api.allorigins.win/get?url=${enc(y2)}`,`https://corsproxy.io/?${enc(y1)}`,`https://api.allorigins.win/raw?url=${enc(y1)}`,`https://thingproxy.freeboard.io/fetch/${y1}`,`https://api.codetabs.com/v1/proxy?quest=${enc(y1)}`];
+  for(const url of proxies){try{const resp=await fetchWithTimeout(url,8000);if(!resp.ok)continue;const wrapper=await resp.json();const raw=wrapper.contents||wrapper;const data=typeof raw==='string'?JSON.parse(raw):raw;const parsed=parseYahooResult(data,ticker);if(parsed)return parsed;}catch(e){continue;}}
+  return null;
+}
 
-  // ── 0순위: 우리 Vercel 서버 (CORS 없음, 모바일 포함 완벽) ──
-  try {
-    const resp = await fetchWithTimeout(`/api/stock?ticker=${enc(ticker)}`, 10000);
-    if (resp.ok) {
-      const data = await resp.json();
-      const parsed = parseYahooResult(data, ticker);
-      if (parsed) return parsed;
-    }
-  } catch(e) {}
-
-  // ── 1순위~: 외부 프록시 (Vercel 실패 시 백업) ──
-  const proxies=[
-    `https://api.allorigins.win/get?url=${enc(y1)}`,
-    `https://api.allorigins.win/get?url=${enc(y2)}`,
-    `https://corsproxy.io/?${enc(y1)}`,
-    `https://api.allorigins.win/raw?url=${enc(y1)}`,
-    `https://thingproxy.freeboard.io/fetch/${y1}`,
-    `https://api.codetabs.com/v1/proxy?quest=${enc(y1)}`,
-  ];
-  for(const url of proxies){
-    try{
-      const resp=await fetchWithTimeout(url,8000);if(!resp.ok)continue;
-      const wrapper=await resp.json();const raw=wrapper.contents||wrapper;
-      const data=typeof raw==='string'?JSON.parse(raw):raw;
-      const parsed = parseYahooResult(data, ticker);
-      if (parsed) return parsed;
-    }catch(e){continue;}
+async function tryFetchYahoo(ticker){
+  // 1차 시도
+  let result=await fetchOneTicker(ticker);
+  if(result)return result;
+  // .KS 실패 → .KQ 자동 재시도 (KOSDAQ·코스닥ETF)
+  if(ticker.endsWith('.KS')){
+    const kq=ticker.replace('.KS','.KQ');
+    result=await fetchOneTicker(kq);
+    if(result)return result;
   }
   return null;
 }
