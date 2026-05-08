@@ -1,14 +1,11 @@
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET');
-
   const { ticker } = req.query;
   if (!ticker) return res.status(400).json({ error: 'ticker required' });
-
   const end = Math.floor(Date.now() / 1000);
   const start = end - 60 * 60 * 24 * 130;
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&period1=${start}&period2=${end}`;
-
   try {
     const resp = await fetch(url, {
       headers: {
