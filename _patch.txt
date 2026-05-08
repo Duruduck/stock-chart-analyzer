@@ -1,0 +1,1 @@
+const allP=[...closes,...(MC?[...MC.ds.map(d=>d.p90),...MC.ds.map(d=>d.p10)]:[]),...BB.filter(Boolean).map(b=>b.u),...BB.filter(Boolean).map(b=>b.lo),...calcSR(SD.closes,SD.closes[SD.closes.length-1]).resistance,...calcSR(SD.closes,SD.closes[SD.closes.length-1]).support].filter(Boolean);
