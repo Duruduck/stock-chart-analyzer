@@ -40,7 +40,7 @@
     <span style="margin-left:auto;font-size:9px;color:#1e3a4a;background:#0a1a27;padding:2px 7px;border-radius:10px">📡 Yahoo Finance</span>
   </div>
   <div style="display:flex;gap:8px">
-    <input id="qinput" placeholder="종목 코드 (005930, 051980, TSLA)"
+    <input id="qinput" placeholder="종목 코드를 입력해주세요"
       style="flex:1;padding:11px 12px;border-radius:10px;border:1px solid #0d2535;background:#060f1a;color:#cfe8f0;font-size:12px"
       onkeydown="if(event.key==='Enter')doSearch()">
     <button id="search-btn" onclick="doSearch()"
@@ -59,7 +59,7 @@
 
 <div id="error-box">
   <div style="color:#ff5252;font-size:12px;font-weight:700;margin-bottom:6px">⚠️ <span id="err-msg"></span></div>
-  <div style="color:#ff525288;font-size:10px;margin-bottom:10px">팁: 삼성전자, 005930, 051980, AAPL 형식으로 검색하세요.</div>
+  <div style="color:#ff525288;font-size:10px;margin-bottom:10px">팁: 종목 코드(한국) 혹은 티커(미국)를 검색하세요.</div>
   <button onclick="doSearch()" style="padding:7px 14px;border-radius:8px;border:1px solid #ff5252;background:transparent;color:#ff5252;font-size:11px">다시 시도</button>
 </div>
 
