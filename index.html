@@ -518,22 +518,44 @@ async function fetchCurrentPrice(ticker){
 }
 async function resolveKoreanName(q) {
 
+  console.log('resolveKoreanName start', q);
+
   if(!/[가-힣]/.test(q)){
     return null;
   }
 
+  const target =
+    `https://m.stock.naver.com/api/search/all?keyword=${encodeURIComponent(q)}&type=stock`;
+
+  const proxies = [
+
+    `https://corsproxy.io/?${encodeURIComponent(target)}`,
+
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`
+
+  ];
+
   try{
 
-    const url =
-      `https://m.stock.naver.com/api/search/all?keyword=${encodeURIComponent(q)}&type=stock`;
+    const requests = proxies.map(url =>
 
-    const resp = await fetchWithTimeout(url,5000);
+      fetchWithTimeout(url,5000)
+        .then(async resp => {
 
-    if(!resp.ok){
-      return null;
-    }
+          console.log('proxy response',url,resp);
 
-    const data = await resp.json();
+          if(!resp.ok){
+            throw new Error('HTTP '+resp.status);
+          }
+
+          return resp.json();
+        })
+
+    );
+
+    const data = await Promise.any(requests);
+
+    console.log('naver data',data);
 
     const items =
       data?.result?.stocks ||
@@ -542,6 +564,9 @@ async function resolveKoreanName(q) {
       [];
 
     if(!items.length){
+
+      showError('검색 결과가 없습니다.');
+
       return null;
     }
 
@@ -557,6 +582,9 @@ async function resolveKoreanName(q) {
       '';
 
     if(!code){
+
+      showError('종목 코드 파싱 실패');
+
       return null;
     }
 
@@ -569,6 +597,10 @@ async function resolveKoreanName(q) {
   }catch(e){
 
     console.error('resolveKoreanName error',e);
+
+    showError(
+      '한글 종목 검색 실패\n(CORS 또는 프록시 차단)'
+    );
 
     return null;
   }
