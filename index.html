@@ -172,60 +172,58 @@ function resolveTicker(q){
 }
 async function resolveKoreanName(q){
 
-  if(!/[가-힣]/.test(q)){
-    return null;
+  const url =
+    `https://m.stock.naver.com/api/search/all?keyword=${encodeURIComponent(q)}`;
+
+  const proxies = [
+    `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
+  ];
+
+  for(const proxy of proxies){
+
+    try{
+
+      const resp = await fetchWithTimeout(proxy,5000);
+
+      if(!resp.ok) continue;
+
+      const data = await resp.json();
+
+      const items =
+        data?.result?.stocks ||
+        data?.stocks ||
+        [];
+
+      if(!items.length) continue;
+
+      const item = items[0];
+
+      const code =
+        item.itemCode ||
+        item.stockCode ||
+        item.code;
+
+      if(!code) continue;
+
+      const market =
+        item.market ||
+        item.marketName ||
+        '';
+
+      const suffix =
+        market.includes('KOSDAQ')
+          ? '.KQ'
+          : '.KS';
+
+      return code + suffix;
+
+    }catch(e){
+      continue;
+    }
   }
 
-  const normalized =
-    q.trim().toLowerCase();
-
-  // TMAP 우선
-  if(TMAP[normalized]){
-    return TMAP[normalized];
-  }
-
-  try{
-
-    const resp = await fetchWithTimeout(
-      `/api/search-stock?keyword=${encodeURIComponent(q)}`,
-      5000
-    );
-
-    if(!resp.ok){
-      return null;
-    }
-
-    const data = await resp.json();
-
-    const items = data?.stocks || [];
-
-    if(!items.length){
-      return null;
-    }
-
-    const item = items[0];
-
-    const code = item.code;
-
-    const market =
-      item.market || 'KOSPI';
-
-    if(!code){
-      return null;
-    }
-
-    return code + (
-      market.includes('KOSDAQ')
-        ? '.KQ'
-        : '.KS'
-    );
-
-  }catch(e){
-
-    console.error(e);
-
-    return null;
-  }
+  return null;
 }
 function sma(d,p){return d.map((_,i)=>i<p-1?null:d.slice(i-p+1,i+1).reduce((s,v)=>s+v,0)/p);}
 function ema(d,p){const k=2/(p+1),r=[d[0]];for(let i=1;i<d.length;i++)r.push(d[i]*k+r[i-1]*(1-k));return r;}
@@ -562,81 +560,44 @@ let SHOW={candle:true,boll:true,sma5:true,sma20:false,sma60:false,cross:true};
 let HISTORY=[];
 function fmtP(v,isKr){if(v==null)return'-';if(isKr)return'₩'+Math.round(v).toLocaleString('ko-KR');return'$'+v.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function fmtL(v){if(v>=1000000)return(v/1000000).toFixed(2)+'M';if(v>=10000)return(v/10000).toFixed(0)+'만';if(v>=1000)return(v/1000).toFixed(1)+'k';return v.toFixed(2);}
-async function doSearch(
-  forceRefresh=false
-){
+async function doSearch(){
+  const q=document.getElementById('qinput').value.trim();
+  if(!q)return;
 
-  const q =
-    document
-      .getElementById('qinput')
-      .value
-      .trim();
+  setLoading(true,'종목 검색 중...');
 
-  if(!q){
+  let ticker = resolveTicker(q);
+
+  // 한글 종목명 처리
+  if(!ticker && /[가-힣]/.test(q)){
+    ticker = await resolveKoreanName(q);
+  }
+
+  // 끝까지 못 찾은 경우
+  if(!ticker){
+    document.getElementById('err-msg').textContent =
+      '종목 코드를 찾을 수 없어요.';
+    document.getElementById('error-box').style.display='block';
+    setLoading(false);
     return;
   }
 
-  setLoading(
-    true,
-    '종목 검색 중...'
-  );
+  setLoading(true,'실제 주가 데이터 로딩 중...');
 
-  let ticker =
-    resolveTicker(q);
-
-  // 한글 종목명 검색
-  if(
-    /[가-힣]/.test(q) &&
-    !Object.values(TMAP)
-      .includes(ticker)
-  ){
-
-    const naverCode =
-      await resolveKoreanName(q);
-
-    if(naverCode){
-      ticker = naverCode;
-    }
-  }
-
-  setLoading(
-    true,
-    '실제 주가 데이터 로딩 중...'
-  );
-
-  let data =
-    await tryFetchYahoo(
-      ticker,
-      forceRefresh
-    );
+  let data = await tryFetchYahoo(ticker);
 
   if(!data){
-
-    document
-      .getElementById('err-msg')
-      .textContent =
+    document.getElementById('err-msg').textContent =
       '데이터를 가져올 수 없어요.';
-
-    document
-      .getElementById('error-box')
-      .style.display='block';
-
+    document.getElementById('error-box').style.display='block';
     setLoading(false);
-
     return;
   }
 
-  SD = data;
+  SD=data;
+  MC=monteCarlo(SD.closes,SIMDAYS);
 
-  MC = monteCarlo(
-    SD.closes,
-    SIMDAYS
-  );
-
-  addHistory(
-    q,
-    SD.name
-  );
+  addHistory(q,SD.name);
 
   renderStock();
 
