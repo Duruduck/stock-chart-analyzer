@@ -181,8 +181,6 @@ function resolveTicker(q){
 }
 async function resolveKoreanName(q){
 
-  const startTime = Date.now();
-
   const url =
     `https://m.stock.naver.com/api/search/all?keyword=${encodeURIComponent(q)}`;
 
@@ -193,15 +191,9 @@ async function resolveKoreanName(q){
 
   for(const proxy of proxies){
 
-    // 전체 30초 초과
-    if(Date.now() - startTime > 30000){
-
-      throw new Error('timeout');
-    }
-
     try{
 
-      const resp = await fetchWithTimeout(proxy,7000);
+      const resp = await fetchWithTimeout(proxy,5000);
 
       if(!resp.ok) continue;
 
@@ -236,7 +228,6 @@ async function resolveKoreanName(q){
       return code + suffix;
 
     }catch(e){
-
       continue;
     }
   }
@@ -592,23 +583,27 @@ async function doSearch(){
   if(!ticker && /[가-힣]/.test(q)){
 
     try{
-    
-      ticker = await resolveKoreanName(q);
-    
+
+      ticker = await Promise.race([
+
+        resolveKoreanName(q),
+
+        timeoutPromise(20000)
+
+      ]);
+
     }catch(e){
-    
-      if(e.message === 'timeout'){
-    
-        document.getElementById('err-msg').textContent =
-          '검색이 너무 오래 걸립니다. 종목코드로 검색해주세요.';
-    
-        document.getElementById('error-box').style.display='block';
-    
-        setLoading(false);
-    
-        return;
-      }
+
+      document.getElementById('err-msg').textContent =
+        '검색이 너무 오래 걸립니다. 종목코드로 검색해주세요.';
+
+      document.getElementById('error-box').style.display='block';
+
+      setLoading(false);
+
+      return;
     }
+  }
 
   if(!ticker){
 
