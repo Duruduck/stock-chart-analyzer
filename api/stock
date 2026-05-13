@@ -1,0 +1,58 @@
+async function doSearch(){
+
+  const q =
+    document.getElementById('qinput')
+    .value
+    .trim();
+
+  if(!q) return;
+
+  setLoading(true,'종목 검색 중...');
+
+  let ticker = resolveTicker(q);
+
+  // 한글 + TMAP 미존재
+  if(
+    /[가-힣]/.test(q) &&
+    ticker === q.trim().toUpperCase()
+  ){
+
+    const found =
+      await resolveKoreanName(q);
+
+    if(found){
+      ticker = found;
+    }
+  }
+
+  setLoading(true,'실제 주가 데이터 로딩 중...');
+
+  let data = await tryFetchYahoo(ticker);
+
+  if(!data){
+
+    document.getElementById('err-msg')
+      .textContent =
+      '데이터를 가져올 수 없어요.';
+
+    document.getElementById('error-box')
+      .style.display='block';
+
+    setLoading(false);
+
+    return;
+  }
+
+  SD = data;
+
+  MC = monteCarlo(
+    SD.closes,
+    SIMDAYS
+  );
+
+  addHistory(q,SD.name);
+
+  renderStock();
+
+  setLoading(false);
+}
