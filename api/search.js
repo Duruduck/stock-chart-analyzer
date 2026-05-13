@@ -1,41 +1,64 @@
-export default async function handler(req,res){
+export default async function handler(req, res) {
+  try {
+    const q = req.query.q;
 
-  const { keyword } = req.query;
-
-  if(!keyword){
-    return res.status(400).json({
-      error:'keyword required'
-    });
-  }
-
-  try{
+    if (!q) {
+      return res.status(400).json({
+        error: 'Query required'
+      });
+    }
 
     const url =
-      `https://m.stock.naver.com/api/search/all?keyword=${encodeURIComponent(keyword)}&type=stock`;
+      `https://m.stock.naver.com/api/search/all?keyword=${encodeURIComponent(q)}&type=stock`;
 
-    const response = await fetch(url,{
-      headers:{
-        'User-Agent':'Mozilla/5.0'
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0'
       }
     });
 
+    if (!response.ok) {
+      return res.status(500).json({
+        error: 'Naver API failed'
+      });
+    }
+
     const data = await response.json();
 
-    const stocks =
-      data?.result?.stocks?.map(v=>({
-        code:v.itemCode,
-        market:v.market,
-        name:v.stockName
-      })) || [];
+    const stocks = data?.stocks || [];
 
-    res.status(200).json({
-      stocks
+    if (!stocks.length) {
+      return res.status(404).json({
+        error: 'No stocks found'
+      });
+    }
+
+    const stock = stocks[0];
+
+    let symbol = stock?.reutersCode || stock?.stockCode;
+
+    if (!symbol) {
+      return res.status(404).json({
+        error: 'No symbol found'
+      });
+    }
+
+    // Yahoo 형식 변환
+    if (/^\d{6}$/.test(symbol)) {
+      symbol += '.KS';
+    }
+
+    return res.status(200).json({
+      query: q,
+      name: stock.stockName,
+      symbol
     });
 
-  }catch(e){
+  } catch (err) {
+    console.error(err);
 
-    res.status(500).json({
-      error:e.message
+    return res.status(500).json({
+      error: err.message
     });
   }
 }
