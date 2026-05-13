@@ -526,10 +526,9 @@ async function resolveKoreanName(query){
       return query;
     }
 
-    const response =
-      await fetch(
-        `/api/search?q=${encodeURIComponent(query)}`
-      );
+    const response = await fetch(
+      `/api/search?q=${encodeURIComponent(query)}`
+    );
 
     console.log(
       'search status',
@@ -631,7 +630,7 @@ async function doSearch(forceRefresh=false){
       if(!resolvedTicker){
 
         showError(
-          '종목 코드로 재시도 권장'
+          '종목을 찾을 수 없습니다.'
         );
 
         setLoading(false);
@@ -696,7 +695,10 @@ async function doSearch(forceRefresh=false){
     SIMDAYS
   );
 
-  addHistory(q,SD.name);
+  addHistory(
+    q,
+    SD.name
+  );
 
   renderStock();
 
