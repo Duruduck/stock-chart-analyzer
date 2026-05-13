@@ -150,89 +150,43 @@ function resolveTicker(q){
   const raw = q.trim();
   const k = raw.toLowerCase().replace(/\s+/g,'');
 
-  // 매핑 우선
-  if(TMAP[k]) return TMAP[k];
-
-  for(const [key,val] of Object.entries(TMAP)){
-    if(k.includes(key) || key.includes(k)) return val;
+  // TMAP 직접 매칭
+  if(TMAP[k]){
+    return {
+      resolved: true,
+      ticker: TMAP[k]
+    };
   }
 
-  // 이미 .KS/.KQ
+  // 이미 .KS .KQ 붙은 경우
   if(/\.(KS|KQ)$/i.test(raw)){
-    return raw.toUpperCase();
+    return {
+      resolved: true,
+      ticker: raw.toUpperCase()
+    };
   }
 
-  // 숫자 6자리 → 한국주식
+  // 미국 ticker
+  if(/^[A-Z]{1,5}$/i.test(raw)){
+    return {
+      resolved: true,
+      ticker: raw.toUpperCase()
+    };
+  }
+
+  // 한국 숫자 코드
   if(/^\d{6}$/.test(raw)){
-    return raw + '.KS';
+    return {
+      resolved: true,
+      ticker: raw + '.KS'
+    };
   }
 
-  // 미국 티커
-  if(/^[A-Za-z]{1,5}$/.test(raw)){
-    return raw.toUpperCase();
-  }
-
-  // 한글은 unresolved 상태 반환
-  if(/[가-힣]/.test(raw)){
-    return null;
-  }
-
-  return raw.toUpperCase();
-}
-async function resolveKoreanName(q){
-
-  const url =
-    `https://m.stock.naver.com/api/search/all?keyword=${encodeURIComponent(q)}`;
-
-  const proxies = [
-    `https://corsproxy.io/?${encodeURIComponent(url)}`,
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`
-  ];
-
-  for(const proxy of proxies){
-
-    try{
-
-      const resp = await fetchWithTimeout(proxy,5000);
-
-      if(!resp.ok) continue;
-
-      const data = await resp.json();
-
-      const items =
-        data?.result?.stocks ||
-        data?.stocks ||
-        [];
-
-      if(!items.length) continue;
-
-      const item = items[0];
-
-      const code =
-        item.itemCode ||
-        item.stockCode ||
-        item.code;
-
-      if(!code) continue;
-
-      const market =
-        item.market ||
-        item.marketName ||
-        '';
-
-      const suffix =
-        market.includes('KOSDAQ')
-          ? '.KQ'
-          : '.KS';
-
-      return code + suffix;
-
-    }catch(e){
-      continue;
-    }
-  }
-
-  return null;
+  // 실패
+  return {
+    resolved: false,
+    ticker: raw
+  };
 }
 function sma(d,p){return d.map((_,i)=>i<p-1?null:d.slice(i-p+1,i+1).reduce((s,v)=>s+v,0)/p);}
 function ema(d,p){const k=2/(p+1),r=[d[0]];for(let i=1;i<d.length;i++)r.push(d[i]*k+r[i-1]*(1-k));return r;}
@@ -562,6 +516,63 @@ async function fetchCurrentPrice(ticker){
     return null;
   }
 }
+async function resolveKoreanName(q) {
+
+  if(!/[가-힣]/.test(q)){
+    return null;
+  }
+
+  try{
+
+    const url =
+      `https://m.stock.naver.com/api/search/all?keyword=${encodeURIComponent(q)}&type=stock`;
+
+    const resp = await fetchWithTimeout(url,5000);
+
+    if(!resp.ok){
+      return null;
+    }
+
+    const data = await resp.json();
+
+    const items =
+      data?.result?.stocks ||
+      data?.stocks ||
+      data?.items ||
+      [];
+
+    if(!items.length){
+      return null;
+    }
+
+    const item = items[0];
+
+    const code =
+      item.itemCode ||
+      item.code;
+
+    const market =
+      item.stockExchangeType ||
+      item.market ||
+      '';
+
+    if(!code){
+      return null;
+    }
+
+    return code + (
+      market.includes('KOSDAQ')
+        ? '.KQ'
+        : '.KS'
+    );
+
+  }catch(e){
+
+    console.error('resolveKoreanName error',e);
+
+    return null;
+  }
+}
 let SD=null,MC=null,PERIOD=30,SIMDAYS=5;
 const STOCK_CACHE = new Map();
 const CACHE_EXPIRE = 1000 * 60 * 3;
@@ -576,33 +587,28 @@ async function doSearch(){
   if(!q)return;
 
   setLoading(true,'종목 검색 중...');
-
-  let ticker = resolveTicker(q);
-
+  const result = resolveTicker(q);
+  
+  let ticker = result.ticker;
+  
   // 한글 종목명 검색
-  if(!ticker && /[가-힣]/.test(q)){
-
-    try{
-
-      ticker = await Promise.race([
-
-        resolveKoreanName(q),
-
-        timeoutPromise(30000)
-
-      ]);
-
-    }catch(e){
-
-      document.getElementById('err-msg').textContent =
-        '검색이 너무 오래 걸립니다. 종목코드로 검색해주세요.';
-
-      document.getElementById('error-box').style.display='block';
-
+  if(!result.resolved && /[가-힣]/.test(q)){
+  
+    setLoading(true,'종목 코드 검색 중...');
+  
+    const resolvedTicker =
+      await resolveKoreanName(q);
+  
+    if(!resolvedTicker){
+  
+      showError('종목코드로 재시도 해주세.');
+  
       setLoading(false);
-
+  
       return;
     }
+  
+    ticker = resolvedTicker;
   }
 
   if(!ticker){
@@ -646,6 +652,12 @@ async function doSearch(){
 function quickSearch(name){document.getElementById('qinput').value=name;doSearch();}
 function addHistory(q,name){HISTORY=[{q,name},...HISTORY.filter(h=>h.q!==q)].slice(0,5);const bar=document.getElementById('history-bar');bar.innerHTML=HISTORY.map(h=>`<button onclick="document.getElementById('qinput').value='${h.q}';doSearch()" style="padding:3px 8px;border-radius:20px;border:1px solid #0d2535;background:#060f1a;color:#456070;font-size:9.5px;cursor:pointer">🕐 ${h.name}</button>`).join('');}
 function setLoading(on,msg){document.getElementById('loading-box').style.display=on?'block':'none';document.getElementById('error-box').style.display='none';document.getElementById('home-box').style.display=on?'none':'';if(SD&&!on)document.getElementById('home-box').style.display='none';document.getElementById('stock-box').style.display=(SD&&!on)?'block':'none';document.getElementById('search-btn').disabled=on;document.getElementById('search-btn').style.background=on?'#0d2535':'linear-gradient(135deg,#00b0ff,#00e5ff)';document.getElementById('search-btn').textContent=on?'로딩중':'🔍 검색';if(msg)document.getElementById('loading-msg').textContent=msg;}
+function showError(msg){
+
+  document.getElementById('err-msg').textContent = msg;
+
+  document.getElementById('error-box').style.display = 'block';
+}
 function totScY(v,mn,mx,h,pad=4){return h-pad-((v-mn)/(mx-mn||1))*(h-pad*2);}
 function mkSVGPath(pts){const v=pts.filter(p=>p&&!isNaN(p[1]));if(!v.length)return'';return v.map((p,i)=>`${i===0?'M':'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');}
 function buildGauge(sc){const c=Math.max(-100,Math.min(100,sc));const rad=((c/100*90-90)*Math.PI/180),cx=60,cy=52,r=40;const col=c>30?'#00e676':c>0?'#69f0ae':c>-30?'#ffd740':'#ff5252';const lbl=c>=50?'강한매수':c>=20?'매수':c>=-20?'중립':c>=-50?'매도':'강한매도';const nx=cx+r*Math.cos(rad),ny=cy+r*Math.sin(rad);return`<svg width="120" height="68" viewBox="0 0 120 68"><defs><linearGradient id="gg" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#ff5252"/><stop offset="50%" stop-color="#ffd740"/><stop offset="100%" stop-color="#00e676"/></linearGradient></defs><path d="M${cx-r},${cy} A${r},${r} 0 0,1 ${cx+r},${cy}" fill="none" stroke="#1a2a35" stroke-width="8"/><path d="M${cx-r},${cy} A${r},${r} 0 0,1 ${cx+r},${cy}" fill="none" stroke="url(#gg)" stroke-width="5" stroke-linecap="round"/><line x1="${cx}" y1="${cy}" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}" stroke="${col}" stroke-width="2.5" stroke-linecap="round"/><circle cx="${cx}" cy="${cy}" r="3.5" fill="${col}"/><text x="${cx}" y="${cy+13}" text-anchor="middle" fill="${col}" font-size="9" font-weight="700">${lbl}</text></svg>`;}
