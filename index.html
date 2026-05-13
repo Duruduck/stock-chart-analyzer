@@ -516,92 +516,36 @@ async function fetchCurrentPrice(ticker){
     return null;
   }
 }
-async function resolveKoreanName(q) {
+async function resolveKoreanName(query) {
+  try {
+    console.log('resolveKoreanName start', query);
 
-  console.log('resolveKoreanName start', q);
-
-  if(!/[가-힣]/.test(q)){
-    return null;
-  }
-
-  const target =
-    `https://m.stock.naver.com/api/search/all?keyword=${encodeURIComponent(q)}&type=stock`;
-
-  const proxies = [
-
-    `https://corsproxy.io/?${encodeURIComponent(target)}`,
-
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`
-
-  ];
-
-  try{
-
-    const requests = proxies.map(url =>
-
-      fetchWithTimeout(url,5000)
-        .then(async resp => {
-
-          console.log('proxy response',url,resp);
-
-          if(!resp.ok){
-            throw new Error('HTTP '+resp.status);
-          }
-
-          return resp.json();
-        })
-
-    );
-
-    const data = await Promise.any(requests);
-
-    console.log('naver data',data);
-
-    const items =
-      data?.result?.stocks ||
-      data?.stocks ||
-      data?.items ||
-      [];
-
-    if(!items.length){
-
-      showError('검색 결과가 없습니다.');
-
-      return null;
+    // 숫자 ticker 직접 입력
+    if (/^\d{6}$/.test(query)) {
+      return query + '.KS';
     }
 
-    const item = items[0];
-
-    const code =
-      item.itemCode ||
-      item.code;
-
-    const market =
-      item.stockExchangeType ||
-      item.market ||
-      '';
-
-    if(!code){
-
-      showError('종목 코드 파싱 실패');
-
-      return null;
+    // 이미 Yahoo ticker 형식
+    if (query.includes('.KS') || query.includes('.KQ')) {
+      return query;
     }
 
-    return code + (
-      market.includes('KOSDAQ')
-        ? '.KQ'
-        : '.KS'
+    const response = await fetch(
+      `/api/search?q=${encodeURIComponent(query)}`
     );
 
-  }catch(e){
+    const data = await response.json();
 
-    console.error('resolveKoreanName error',e);
+    console.log('search result', data);
 
-    showError(
-      '한글 종목 검색 실패\n(CORS 또는 프록시 차단)'
-    );
+    if (!response.ok) {
+      throw new Error(data.error || '검색 실패');
+    }
 
+    return data.symbol;
+
+  } catch (err) {
+    console.error('resolveKoreanName error', err);
     return null;
   }
 }
