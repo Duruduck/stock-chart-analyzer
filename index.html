@@ -581,7 +581,6 @@ async function doSearch(){
   if(!ticker && /[가-힣]/.test(q)){
     ticker = await resolveKoreanName(q);
   }
-
   // 끝까지 못 찾은 경우
   if(!ticker){
     document.getElementById('err-msg').textContent =
