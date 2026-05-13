@@ -124,30 +124,30 @@ const BASE_PRICES={
 function resolveTicker(q){const k=q.trim().toLowerCase().replace(/\s+/g,'');if(TMAP[k])return TMAP[k];for(const[key,val]of Object.entries(TMAP)){if(k.includes(key)||key.includes(k))return val;}if(/\.(KS|KQ)$/i.test(q.trim()))return q.trim().toUpperCase();if(/^[A-Za-z0-9]{5,6}$/.test(q.trim()))return q.trim().toUpperCase()+'.KS';return q.trim().toUpperCase();}
 async function resolveKoreanName(q){
   if(!/[가-힣]/.test(q)) return null;
-  const normalized = q.trim().toLowerCase();
-  // TMAP 우선
-  if(TMAP[normalized]){
-    return TMAP[normalized];
+  const key = q.trim().toLowerCase().replace(/\s+/g,'');
+  if(TMAP[key]){
+    return TMAP[key];
   }
   try{
-    const resp = await fetchWithTimeout(
-      `/api/search-stock?keyword=${encodeURIComponent(q)}`,
-      5000
+    const resp = await fetch(
+      `/api/search?keyword=${encodeURIComponent(q)}`
     );
+
     if(!resp.ok) return null;
     const data = await resp.json();
     const items = data?.stocks || [];
     if(!items.length) return null;
     const item = items[0];
     const code = item.code;
-    const market = item.market || 'KOSPI';
+    const market = item.market || '';
     if(!code) return null;
-    return code + (
+    const suffix =
       market.includes('KOSDAQ')
-        ? '.KQ'
-        : '.KS'
-    );
+      ? '.KQ'
+      : '.KS';
+    return code + suffix;
   }catch(e){
+    console.error(e);
     return null;
   }
 }
@@ -158,7 +158,59 @@ function boll(d,p=20,m=2){return d.map((_,i)=>{if(i<p-1)return null;const sl=d.s
 function macd(d){const e12=ema(d,12),e26=ema(d,26),mc=e12.map((v,i)=>v-e26[i]),sig=ema(mc,9);return{mc,sig,hist:mc.map((v,i)=>v-sig[i])};}
 function obv(c,v){const r=[0];for(let i=1;i<c.length;i++)r.push(r[i-1]+(c[i]>c[i-1]?v[i]:c[i]<c[i-1]?-v[i]:0));return r;}
 function crosses(fast,slow){const out=[];for(let i=1;i<fast.length;i++){if(!fast[i]||!slow[i]||!fast[i-1]||!slow[i-1])continue;if(fast[i-1]<slow[i-1]&&fast[i]>=slow[i])out.push({i,type:'golden'});else if(fast[i-1]>slow[i-1]&&fast[i]<=slow[i])out.push({i,type:'dead'});}return out;}
-function monteCarlo(prices,days=5,sims=1200){const rets=prices.slice(1).map((p,i)=>Math.log(p/prices[i]));const mu=rets.reduce((s,v)=>s+v,0)/rets.length;const sigma=Math.sqrt(rets.reduce((s,v)=>s+(v-mu)**2,0)/rets.length);const last=prices[prices.length-1],paths=[];for(let s=0;s<sims;s++){let p=last;const path=[p];for(let d=0;d<days;d++){const z=Array.from({length:6},()=>Math.random()).reduce((a,b)=>a+b)-3;p*=Math.exp((mu-.5*sigma*sigma)+sigma*z);path.push(p);}paths.push(path);}const fp=paths.map(p=>p[p.length-1]).sort((a,b)=>a-b);const ds=[];for(let d=1;d<=days;d++){const dp=paths.map(p=>p[d]).sort((a,b)=>a-b);ds.push({day:d,p10:dp[Math.floor(sims*.1)],p50:dp[Math.floor(sims*.5)],p90:dp[Math.floor(sims*.9)]});}return{p10:fp[Math.floor(sims*.1)],p50:fp[Math.floor(sims*.5)],p90:fp[Math.floor(sims*.9)],ds,sigma,mu};}
+function monteCarlo(prices, days=5, sims=400){
+  const rets = [];
+  for(let i=1;i<prices.length;i++){
+    rets.push(Math.log(prices[i]/prices[i-1]));
+  }
+
+  const mu =
+    rets.reduce((a,b)=>a+b,0) / rets.length;
+  const variance =
+    rets.reduce((s,v)=>s+(v-mu)*(v-mu),0)
+    / rets.length;
+
+  const sigma = Math.sqrt(variance);
+  const last = prices[prices.length-1];
+  const ds = [];
+  let prev = new Float64Array(sims);
+  for(let i=0;i<sims;i++){
+    prev[i] = last;
+  }
+
+  for(let d=1; d<=days; d++){
+    const next = new Float64Array(sims);
+    for(let i=0;i<sims;i++){
+      const z =
+        (Math.random() +
+         Math.random() +
+         Math.random() - 1.5) * 1.2;
+      next[i] =
+        prev[i] *
+        Math.exp(
+          (mu - 0.5*sigma*sigma)
+          + sigma*z
+        );
+    }
+    const arr = Array.from(next).sort((a,b)=>a-b);
+    ds.push({
+      day:d,
+      p10:arr[(sims*0.1)|0],
+      p50:arr[(sims*0.5)|0],
+      p90:arr[(sims*0.9)|0]
+    });
+    prev = next;
+  }
+  const finalArr = Array.from(prev).sort((a,b)=>a-b);
+  return{
+    p10:finalArr[(sims*0.1)|0],
+    p50:finalArr[(sims*0.5)|0],
+    p90:finalArr[(sims*0.9)|0],
+    ds,
+    sigma,
+    mu
+  };
+}
 function lrForecast(prices,days=5){const n=Math.min(20,prices.length),rec=prices.slice(-n);const xm=(n-1)/2,ym=rec.reduce((s,v)=>s+v,0)/n;const sl=rec.reduce((s,v,i)=>s+(i-xm)*(v-ym),0)/rec.reduce((s,_,i)=>s+(i-xm)**2,0);const ic=ym-sl*xm;return Array.from({length:days},(_,i)=>ic+sl*(n+i));}
 
 // ── 전문가 방식: 1개 저항선 / 1개 지지선 (터치 가중 + 52주 fallback + 근접도) ──
@@ -207,15 +259,13 @@ async function fetchOneTicker(ticker){
   try{
     const resp = await fetchWithTimeout(
       `/api/stock?ticker=${encodeURIComponent(ticker)}`,
-      7000
+      8000
     );
-    if(!resp.ok){
-      return null;
-    }
+    if(!resp.ok) return null;
     const data = await resp.json();
     return parseYahooResult(data, ticker);
   }catch(e){
-    console.error('stock fetch error:', e);
+    console.error(e);
     return null;
   }
 }
@@ -240,43 +290,36 @@ let HISTORY=[];
 function fmtP(v,isKr){if(v==null)return'-';if(isKr)return'₩'+Math.round(v).toLocaleString('ko-KR');return'$'+v.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function fmtL(v){if(v>=1000000)return(v/1000000).toFixed(2)+'M';if(v>=10000)return(v/10000).toFixed(0)+'만';if(v>=1000)return(v/1000).toFixed(1)+'k';return v.toFixed(2);}
 async function doSearch(){
-  const q =
-    document.getElementById('qinput')
-    .value
-    .trim();
+  const q = document.getElementById('qinput').value.trim();
   if(!q) return;
   setLoading(true,'종목 검색 중...');
   let ticker = resolveTicker(q);
-  // 한글 + TMAP 미존재
-  if(
-    /[가-힣]/.test(q) &&
-    ticker === q.trim().toUpperCase()
-  ){
-    const found =
-      await resolveKoreanName(q);
-    if(found){
-      ticker = found;
+  if(/[가-힣]/.test(q)){
+    const resolved = await resolveKoreanName(q);
+    if(resolved){
+      ticker = resolved;
     }
+  }
+  if(!ticker){
+   document.getElementById('err-msg').textContent =
+      '종목 코드를 찾을 수 없습니다';
+    document.getElementById('error-box').style.display='block';
+    setLoading(false);
+    return;
   }
 
   setLoading(true,'실제 주가 데이터 로딩 중...');
-  let data = await tryFetchYahoo(ticker);
+  const data = await tryFetchYahoo(ticker);
   if(!data){
-    document.getElementById('err-msg')
-      .textContent =
-      '데이터를 가져올 수 없어요. 코드로 검색해보세요.';
-    document.getElementById('error-box')
-      .style.display='block';
+    document.getElementById('err-msg').textContent =
+      '주가 데이터를 가져오지 못했습니다';
+    document.getElementById('error-box').style.display='block';
     setLoading(false);
     return;
   }
 
   SD = data;
-  MC = monteCarlo(
-    SD.closes,
-    SIMDAYS
-  );
-
+  MC = monteCarlo(SD.closes,SIMDAYS);
   addHistory(q,SD.name);
   renderStock();
   setLoading(false);
