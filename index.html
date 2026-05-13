@@ -137,6 +137,15 @@ const BASE_PRICES={
   '323410.KS':35000,'051910.KS':380000,'207940.KS':950000,'012330.KS':280000,
   'NVDA':110,'TSLA':240,'AAPL':210,'MSFT':420,'GOOGL':160,'META':560,'AMZN':190
 };
+function timeoutPromise(ms){
+  return new Promise((_,reject)=>{
+    setTimeout(()=>{
+
+      reject(new Error('timeout'));
+    },ms);
+  });
+
+}
 function resolveTicker(q){
   const raw = q.trim();
   const k = raw.toLowerCase().replace(/\s+/g,'');
@@ -561,24 +570,50 @@ let HISTORY=[];
 function fmtP(v,isKr){if(v==null)return'-';if(isKr)return'₩'+Math.round(v).toLocaleString('ko-KR');return'$'+v.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function fmtL(v){if(v>=1000000)return(v/1000000).toFixed(2)+'M';if(v>=10000)return(v/10000).toFixed(0)+'만';if(v>=1000)return(v/1000).toFixed(1)+'k';return v.toFixed(2);}
 async function doSearch(){
+
   const q=document.getElementById('qinput').value.trim();
+
   if(!q)return;
 
   setLoading(true,'종목 검색 중...');
 
   let ticker = resolveTicker(q);
 
-  // 한글 종목명 처리
+  // 한글 종목명 검색
   if(!ticker && /[가-힣]/.test(q)){
-    ticker = await resolveKoreanName(q);
+
+    try{
+
+      ticker = await Promise.race([
+
+        resolveKoreanName(q),
+
+        timeoutPromise(30000)
+
+      ]);
+
+    }catch(e){
+
+      document.getElementById('err-msg').textContent =
+        '검색이 너무 오래 걸립니다. 종목코드로 검색해주세요.';
+
+      document.getElementById('error-box').style.display='block';
+
+      setLoading(false);
+
+      return;
+    }
   }
 
-  // 끝까지 못 찾은 경우
   if(!ticker){
+
     document.getElementById('err-msg').textContent =
-      '종목 코드를 찾을 수 없어요.';
+      '종목을 찾을 수 없습니다.';
+
     document.getElementById('error-box').style.display='block';
+
     setLoading(false);
+
     return;
   }
 
@@ -587,14 +622,19 @@ async function doSearch(){
   let data = await tryFetchYahoo(ticker);
 
   if(!data){
+
     document.getElementById('err-msg').textContent =
       '데이터를 가져올 수 없어요.';
+
     document.getElementById('error-box').style.display='block';
+
     setLoading(false);
+
     return;
   }
 
   SD=data;
+
   MC=monteCarlo(SD.closes,SIMDAYS);
 
   addHistory(q,SD.name);
