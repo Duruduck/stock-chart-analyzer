@@ -1,0 +1,30 @@
+app.get('/api/price', async (req,res)=>{
+
+  const ticker = req.query.ticker;
+
+  try{
+
+    const url =
+      `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1d`;
+
+    const response = await fetch(url,{
+      headers:{
+        'User-Agent':'Mozilla/5.0'
+      }
+    });
+
+    const data = await response.json();
+
+    const price =
+      data?.chart?.result?.[0]
+      ?.meta?.regularMarketPrice;
+
+    res.json({price});
+
+  }catch(e){
+
+    res.status(500).json({
+      error:'price fetch failed'
+    });
+  }
+});
