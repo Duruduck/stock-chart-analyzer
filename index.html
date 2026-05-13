@@ -47,22 +47,6 @@
       style="padding:11px 14px;border-radius:10px;background:linear-gradient(135deg,#00b0ff,#00e5ff);color:#030b12;font-size:12px;font-weight:700;white-space:nowrap">
       🔍 검색
     </button>
-    <button
-    onclick="doSearch(true)"
-    style="
-      margin-top:8px;
-      width:100%;
-      padding:9px;
-      border-radius:10px;
-      background:#0a1a27;
-      border:1px solid #0d2535;
-      color:#00e5ff;
-      font-size:11px;
-      font-weight:700;
-    "
-    >
-    새로고침
-    </button>
   </div>
   <div id="history-bar" style="margin-top:8px;display:flex;gap:5px;flex-wrap:wrap"></div>
 </div>
@@ -137,56 +121,35 @@ const BASE_PRICES={
   '323410.KS':35000,'051910.KS':380000,'207940.KS':950000,'012330.KS':280000,
   'NVDA':110,'TSLA':240,'AAPL':210,'MSFT':420,'GOOGL':160,'META':560,'AMZN':190
 };
-function timeoutPromise(ms){
-  return new Promise((_,reject)=>{
-    setTimeout(()=>{
-
-      reject(new Error('timeout'));
-    },ms);
-  });
-
-}
-function resolveTicker(q){
-  const raw = q.trim();
-  const k = raw.toLowerCase().replace(/\s+/g,'');
-
-  // TMAP 직접 매칭
-  if(TMAP[k]){
-    return {
-      resolved: true,
-      ticker: TMAP[k]
-    };
+function resolveTicker(q){const k=q.trim().toLowerCase().replace(/\s+/g,'');if(TMAP[k])return TMAP[k];for(const[key,val]of Object.entries(TMAP)){if(k.includes(key)||key.includes(k))return val;}if(/\.(KS|KQ)$/i.test(q.trim()))return q.trim().toUpperCase();if(/^[A-Za-z0-9]{5,6}$/.test(q.trim()))return q.trim().toUpperCase()+'.KS';return q.trim().toUpperCase();}
+async function resolveKoreanName(q){
+  if(!/[가-힣]/.test(q)) return null;
+  const normalized = q.trim().toLowerCase();
+  // TMAP 우선
+  if(TMAP[normalized]){
+    return TMAP[normalized];
   }
-
-  // 이미 .KS .KQ 붙은 경우
-  if(/\.(KS|KQ)$/i.test(raw)){
-    return {
-      resolved: true,
-      ticker: raw.toUpperCase()
-    };
+  try{
+    const resp = await fetchWithTimeout(
+      `/api/search-stock?keyword=${encodeURIComponent(q)}`,
+      5000
+    );
+    if(!resp.ok) return null;
+    const data = await resp.json();
+    const items = data?.stocks || [];
+    if(!items.length) return null;
+    const item = items[0];
+    const code = item.code;
+    const market = item.market || 'KOSPI';
+    if(!code) return null;
+    return code + (
+      market.includes('KOSDAQ')
+        ? '.KQ'
+        : '.KS'
+    );
+  }catch(e){
+    return null;
   }
-
-  // 미국 ticker
-  if(/^[A-Z]{1,5}$/i.test(raw)){
-    return {
-      resolved: true,
-      ticker: raw.toUpperCase()
-    };
-  }
-
-  // 한국 숫자 코드
-  if(/^\d{6}$/.test(raw)){
-    return {
-      resolved: true,
-      ticker: raw + '.KS'
-    };
-  }
-
-  // 실패
-  return {
-    resolved: false,
-    ticker: raw
-  };
 }
 function sma(d,p){return d.map((_,i)=>i<p-1?null:d.slice(i-p+1,i+1).reduce((s,v)=>s+v,0)/p);}
 function ema(d,p){const k=2/(p+1),r=[d[0]];for(let i=1;i<d.length;i++)r.push(d[i]*k+r[i-1]*(1-k));return r;}
@@ -195,92 +158,7 @@ function boll(d,p=20,m=2){return d.map((_,i)=>{if(i<p-1)return null;const sl=d.s
 function macd(d){const e12=ema(d,12),e26=ema(d,26),mc=e12.map((v,i)=>v-e26[i]),sig=ema(mc,9);return{mc,sig,hist:mc.map((v,i)=>v-sig[i])};}
 function obv(c,v){const r=[0];for(let i=1;i<c.length;i++)r.push(r[i-1]+(c[i]>c[i-1]?v[i]:c[i]<c[i-1]?-v[i]:0));return r;}
 function crosses(fast,slow){const out=[];for(let i=1;i<fast.length;i++){if(!fast[i]||!slow[i]||!fast[i-1]||!slow[i-1])continue;if(fast[i-1]<slow[i-1]&&fast[i]>=slow[i])out.push({i,type:'golden'});else if(fast[i-1]>slow[i-1]&&fast[i]<=slow[i])out.push({i,type:'dead'});}return out;}
-function monteCarlo(prices,days=5,sims){
-
-  const isMobile =
-    /Android|iPhone|iPad|iPod/i
-      .test(navigator.userAgent);
-
-  sims = sims || (
-    isMobile
-      ? 350
-      : 1000
-  );
-
-  const rets = prices
-    .slice(1)
-    .map((p,i)=>
-      Math.log(p/prices[i])
-    );
-
-  const mu =
-    rets.reduce((s,v)=>s+v,0)
-    / rets.length;
-
-  const sigma = Math.sqrt(
-    rets.reduce(
-      (s,v)=>s+(v-mu)**2,
-      0
-    ) / rets.length
-  );
-
-  const last =
-    prices[prices.length-1];
-
-  const paths = [];
-
-  for(let s=0;s<sims;s++){
-
-    let p = last;
-
-    const path = [p];
-
-    for(let d=0;d<days;d++){
-
-      const z =
-        (Math.random()*2-1) +
-        (Math.random()*2-1);
-
-      p *= Math.exp(
-        (mu - 0.5*sigma*sigma)
-        + sigma*z*0.7
-      );
-
-      path.push(p);
-    }
-
-    paths.push(path);
-  }
-
-  const fp = paths
-    .map(p=>p[p.length-1])
-    .sort((a,b)=>a-b);
-
-  const ds = [];
-
-  for(let d=1;d<=days;d++){
-
-    const dp = paths
-      .map(p=>p[d])
-      .sort((a,b)=>a-b);
-
-    ds.push({
-      day:d,
-      p10:dp[Math.floor(sims*0.1)],
-      p50:dp[Math.floor(sims*0.5)],
-      p90:dp[Math.floor(sims*0.9)]
-    });
-  }
-
-  return{
-    p10:fp[Math.floor(sims*0.1)],
-    p50:fp[Math.floor(sims*0.5)],
-    p90:fp[Math.floor(sims*0.9)],
-    ds,
-    sigma,
-    mu
-  };
-}
+function monteCarlo(prices,days=5,sims=1200){const rets=prices.slice(1).map((p,i)=>Math.log(p/prices[i]));const mu=rets.reduce((s,v)=>s+v,0)/rets.length;const sigma=Math.sqrt(rets.reduce((s,v)=>s+(v-mu)**2,0)/rets.length);const last=prices[prices.length-1],paths=[];for(let s=0;s<sims;s++){let p=last;const path=[p];for(let d=0;d<days;d++){const z=Array.from({length:6},()=>Math.random()).reduce((a,b)=>a+b)-3;p*=Math.exp((mu-.5*sigma*sigma)+sigma*z);path.push(p);}paths.push(path);}const fp=paths.map(p=>p[p.length-1]).sort((a,b)=>a-b);const ds=[];for(let d=1;d<=days;d++){const dp=paths.map(p=>p[d]).sort((a,b)=>a-b);ds.push({day:d,p10:dp[Math.floor(sims*.1)],p50:dp[Math.floor(sims*.5)],p90:dp[Math.floor(sims*.9)]});}return{p10:fp[Math.floor(sims*.1)],p50:fp[Math.floor(sims*.5)],p90:fp[Math.floor(sims*.9)],ds,sigma,mu};}
 function lrForecast(prices,days=5){const n=Math.min(20,prices.length),rec=prices.slice(-n);const xm=(n-1)/2,ym=rec.reduce((s,v)=>s+v,0)/n;const sl=rec.reduce((s,v,i)=>s+(i-xm)*(v-ym),0)/rec.reduce((s,_,i)=>s+(i-xm)**2,0);const ic=ym-sl*xm;return Array.from({length:days},(_,i)=>ic+sl*(n+i));}
 
 // ── 전문가 방식: 1개 저항선 / 1개 지지선 (터치 가중 + 52주 fallback + 근접도) ──
@@ -325,394 +203,57 @@ function calcSR(closes,current,h52,l52){
 function score(closes,vols){const last=closes[closes.length-1];const s5=sma(closes,5).slice(-1)[0],s20=sma(closes,20).slice(-1)[0],s60=sma(closes,60).slice(-1)[0];const rv=rsi(closes).slice(-1)[0],bb=boll(closes).slice(-1)[0];const{mc,sig}=macd(closes);const ov=obv(closes,vols),obvUp=ov[closes.length-1]>ov[closes.length-6];let sc=0;const sigs=[];if(last>s5){sc+=8;sigs.push({n:'SMA5 상향',v:'+8',b:true});}else{sc-=8;sigs.push({n:'SMA5 하향',v:'-8',b:false});}if(last>s20){sc+=12;sigs.push({n:'SMA20 상향',v:'+12',b:true});}else{sc-=12;sigs.push({n:'SMA20 하향',v:'-12',b:false});}if(s20>s60){sc+=18;sigs.push({n:'골든크로스',v:'+18',b:true});}else{sc-=18;sigs.push({n:'데드크로스',v:'-18',b:false});}if(rv<30){sc+=22;sigs.push({n:'RSI 과매도',v:'+22',b:true});}else if(rv>70){sc-=12;sigs.push({n:'RSI 과매수',v:'-12',b:false});}else{sc+=5;sigs.push({n:'RSI 중립',v:'+5',b:true});}if(mc.slice(-1)[0]>sig.slice(-1)[0]){sc+=13;sigs.push({n:'MACD 매수',v:'+13',b:true});}else{sc-=13;sigs.push({n:'MACD 매도',v:'-13',b:false});}if(bb&&last<bb.lo){sc+=18;sigs.push({n:'볼밴 하단',v:'+18',b:true});}else if(bb&&last>bb.u){sc-=8;sigs.push({n:'볼밴 상단',v:'-8',b:false});}if(obvUp){sc+=10;sigs.push({n:'OBV 상승',v:'+10',b:true});}else{sc-=10;sigs.push({n:'OBV 하락',v:'-10',b:false});}return{score:Math.max(-100,Math.min(100,sc)),signals:sigs};}
 function fetchWithTimeout(url,ms){const controller=new AbortController();const tid=setTimeout(()=>controller.abort(),ms);return fetch(url,{signal:controller.signal}).then(r=>{clearTimeout(tid);return r;}).catch(e=>{clearTimeout(tid);throw e;});}
 function parseYahooResult(data,ticker){const result=data?.chart?.result?.[0];if(!result)return null;const ts=result.timestamp,q=result.indicators.quote[0],meta=result.meta;const valid=ts.map((t,i)=>({o:q.open[i],h:q.high[i],l:q.low[i],c:q.close[i],v:q.volume[i]})).filter(d=>d.c!=null&&d.v!=null&&d.v>0);if(valid.length<15)return null;const recent=valid.slice(-100);const isKr=ticker.endsWith('.KS')||ticker.endsWith('.KQ');return{name:meta.longName||meta.shortName||ticker,ticker,isKr,market:isKr?(ticker.endsWith('.KQ')?'KOSDAQ':'KOSPI'):'해외',cur:meta.regularMarketPrice||recent[recent.length-1].c,prev:meta.previousClose||recent[recent.length-2].c,h52:meta.fiftyTwoWeekHigh,l52:meta.fiftyTwoWeekLow,closes:recent.map(d=>d.c),volumes:recent.map(d=>d.v),candles:recent.map(d=>({o:d.o||d.c,h:d.h||d.c,l:d.l||d.c,c:d.c})),len:recent.length,simulated:false};}
-async function fetchOneTicker(
-  ticker,
-  forceRefresh=false
-){
-
-  // -------------------
-  // 1. 메모리 캐시 확인
-  // -------------------
-
-  if(
-    !forceRefresh &&
-    STOCK_CACHE.has(ticker)
-  ){
-
-    const cached =
-      STOCK_CACHE.get(ticker);
-
-    if(
-      Date.now() - cached.time
-      < CACHE_EXPIRE
-    ){
-
-      console.log(
-        'MEMORY CACHE HIT:',
-        ticker
-      );
-
-      return cached.data;
-    }
-
-    STOCK_CACHE.delete(ticker);
-  }
-
-  // -------------------
-  // 2. localStorage 확인
-  // -------------------
-
-  if(!forceRefresh){
-
-    try{
-
-      const saved =
-        localStorage.getItem(
-          'stock_'+ticker
-        );
-
-      if(saved){
-
-        const parsed =
-          JSON.parse(saved);
-
-        if(
-          Date.now() - parsed.time
-          < CACHE_EXPIRE
-        ){
-
-          console.log(
-            'LOCAL CACHE HIT:',
-            ticker
-          );
-
-          // 메모리에도 복원
-          STOCK_CACHE.set(ticker,{
-            data:parsed.data,
-            time:parsed.time
-          });
-
-          return parsed.data;
-        }
-
-        localStorage.removeItem(
-          'stock_'+ticker
-        );
-      }
-
-    }catch(e){
-      console.error(e);
-    }
-  }
-
-  // -------------------
-  // 3. 서버 fetch
-  // -------------------
-
+async function fetchOneTicker(ticker){
   try{
-
-    const resp =
-      await fetchWithTimeout(
-        `/api/stock?ticker=${encodeURIComponent(ticker)}`,
-        7000
-      );
-
+    const resp = await fetchWithTimeout(
+      `/api/stock?ticker=${encodeURIComponent(ticker)}`,
+      7000
+    );
     if(!resp.ok){
       return null;
     }
-
-    const data =
-      await resp.json();
-
-    const parsed =
-      parseYahooResult(
-        data,
-        ticker
-      );
-
-    if(parsed){
-
-      // 메모리 저장
-      STOCK_CACHE.set(ticker,{
-        data:parsed,
-        time:Date.now()
-      });
-
-      // localStorage 저장
-      localStorage.setItem(
-        'stock_'+ticker,
-        JSON.stringify({
-          data:parsed,
-          time:Date.now()
-        })
-      );
-
-      console.log(
-        'CACHE SAVE:',
-        ticker
-      );
-    }
-
-    return parsed;
-
+    const data = await resp.json();
+    return parseYahooResult(data, ticker);
   }catch(e){
-
-    console.error(
-      'stock fetch error:',
-      e
-    );
-
+    console.error('stock fetch error:', e);
     return null;
   }
 }
-async function tryFetchYahoo(
-  ticker,
-  forceRefresh=false
-){
-
-  let result =
-    await fetchOneTicker(
-      ticker,
-      forceRefresh
-    );
-
-  if(result){
-    return result;
-  }
-
-  // KS 실패 시 KQ 재시도
-  if(ticker.endsWith('.KS')){
-
-    const kq =
-      ticker.replace(
-        '.KS',
-        '.KQ'
-      );
-
-    result =
-      await fetchOneTicker(
-        kq,
-        forceRefresh
-      );
-
-    if(result){
-      return result;
-    }
-  }
-
-  return null;
-} 
+async function tryFetchYahoo(ticker){let result=await fetchOneTicker(ticker);if(result)return result;if(ticker.endsWith('.KS')){const kq=ticker.replace('.KS','.KQ');result=await fetchOneTicker(kq);if(result)return result;}return null;}
 function genSimData(ticker,name,overrideBase){const base=overrideBase||BASE_PRICES[ticker]||50000;const isKr=ticker.endsWith('.KS')||ticker.endsWith('.KQ');const closes=[];let price=base*(0.85+Math.random()*0.3);const drift=(Math.random()-0.35)*0.002;const vol=0.013+Math.random()*0.02;for(let i=0;i<100;i++){const z=(Math.random()+Math.random()+Math.random()-1.5)*1.2;price=Math.max(price*Math.exp(drift+vol*z),base*0.3);closes.push(isKr?Math.round(price/100)*100:parseFloat(price.toFixed(2)));}closes[99]=isKr?Math.round(base*(0.92+Math.random()*0.16)/100)*100:parseFloat((base*(0.92+Math.random()*0.16)).toFixed(2));const volumes=Array.from({length:100},(_,i)=>{const surge=i>90?(i-90)*500000:0;return Math.round(300000*(0.5+Math.random())+surge);});const candles=closes.map((c,i)=>{const prev=closes[i-1]||c,o=i===0?c*0.998:prev*(0.997+Math.sin(i*2.7)*0.003);const rng=c*(0.008+Math.abs(Math.sin(i*1.3))*0.012);return{o,h:Math.max(o,c)+rng*0.6,l:Math.min(o,c)-rng*0.4,c};});return{name:name||ticker,ticker,isKr,market:isKr?(ticker.endsWith('.KQ')?'KOSDAQ':'KOSPI'):'해외',cur:closes[99],prev:closes[98],h52:Math.max(...closes),l52:Math.min(...closes),closes,volumes,candles,len:100,simulated:true};}
-
-async function resolveKoreanName(query){
-
+async function fetchCurrentPrice(ticker){
   try{
-
-    console.log(
-      'resolveKoreanName start',
-      query
+    const resp = await fetchWithTimeout(
+      `/api/price?ticker=${encodeURIComponent(ticker)}`,
+      5000
     );
-
-    // 숫자 ticker 직접 입력
-    if(/^\d{6}$/.test(query)){
-      return query + '.KS';
-    }
-
-    // 이미 ticker 형식
-    if(
-      query.includes('.KS') ||
-      query.includes('.KQ')
-    ){
-      return query;
-    }
-
-    const response = await fetch(
-      `/api/search?q=${encodeURIComponent(query)}`
-    );
-
-    console.log(
-      'search status',
-      response.status
-    );
-
-    const text =
-      await response.text();
-
-    console.log(
-      'search raw response',
-      text
-    );
-
-    let data;
-
-    try{
-
-      data = JSON.parse(text);
-
-    }catch(e){
-
-      throw new Error(
-        'API 응답 형식 오류'
-      );
-    }
-
-    if(!response.ok){
-
-      throw new Error(
-        data.error ||
-        '검색 API 실패'
-      );
-    }
-
-    if(!data.symbol){
-
-      throw new Error(
-        '종목 검색 결과 없음'
-      );
-    }
-
-    return data.symbol;
-
-  }catch(err){
-
-    console.error(
-      'resolveKoreanName error',
-      err
-    );
-
-    throw err;
+    if(!resp.ok) return null;
+    const data = await resp.json();
+    return data?.price || null;
+  }catch(e){
+    return null;
   }
 }
 let SD=null,MC=null,PERIOD=30,SIMDAYS=5;
-const STOCK_CACHE = new Map();
-const CACHE_EXPIRE = 1000 * 60 * 3;
 let SHOW={candle:true,boll:true,sma5:true,sma20:false,sma60:false,cross:true};
 let HISTORY=[];
 function fmtP(v,isKr){if(v==null)return'-';if(isKr)return'₩'+Math.round(v).toLocaleString('ko-KR');return'$'+v.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function fmtL(v){if(v>=1000000)return(v/1000000).toFixed(2)+'M';if(v>=10000)return(v/10000).toFixed(0)+'만';if(v>=1000)return(v/1000).toFixed(1)+'k';return v.toFixed(2);}
-async function doSearch(forceRefresh=false){
-
-  const q =
-    document
-      .getElementById('qinput')
-      .value
-      .trim();
-
-  if(!q)return;
-
-  setLoading(
-    true,
-    '종목 검색 중...'
-  );
-
-  const result =
-    resolveTicker(q);
-
-  let ticker =
-    result.ticker;
-
-  // 한글 종목명 검색
-  if(
-    !result.resolved &&
-    /[가-힣]/.test(q)
-  ){
-
-    try{
-
-      setLoading(
-        true,
-        '종목 코드 검색 중...'
-      );
-
-      const resolvedTicker =
-        await resolveKoreanName(q);
-
-      if(!resolvedTicker){
-
-        showError(
-          '종목을 찾을 수 없습니다.'
-        );
-
-        setLoading(false);
-
-        return;
-      }
-
-      ticker = resolvedTicker;
-
-    }catch(e){
-
-      console.error(e);
-
-      showError(
-        e.message ||
-        '종목 검색 실패'
-      );
-
-      setLoading(false);
-
-      return;
-    }
-  }
-
-  if(!ticker){
-
-    showError(
-      '종목을 찾을 수 없습니다.'
-    );
-
-    setLoading(false);
-
-    return;
-  }
-
-  setLoading(
-    true,
-    '실제 주가 데이터 로딩 중...'
-  );
-
-  let data =
-    await tryFetchYahoo(
-      ticker,
-      forceRefresh
-    );
-
-  if(!data){
-
-    showError(
-      '데이터를 가져올 수 없어요.'
-    );
-
-    setLoading(false);
-
-    return;
-  }
-
-  SD = data;
-
-  MC = monteCarlo(
-    SD.closes,
-    SIMDAYS
-  );
-
-  addHistory(
-    q,
-    SD.name
-  );
-
-  renderStock();
-
+async function doSearch(){const q=document.getElementById('qinput').value.trim();if(!q)return;setLoading(true,'종목 검색 중...');
+let ticker = resolveTicker(q);
+// 한글이고 TMAP에 없으면 네이버에서 코드 조회
+if(/[가-힣]/.test(q) && !Object.values(TMAP).includes(ticker)) {
+  const naverCode = await resolveKoreanName(q);
+  if(naverCode) ticker = naverCode;
+};setLoading(true,'실제 주가 데이터 로딩 중...');let data=await tryFetchYahoo(ticker);if(!data){
+  document.getElementById('err-msg').textContent='데이터를 가져올 수 없어요. 코드로 검색해보세요 (예: 270520)';
+  document.getElementById('error-box').style.display='block';
   setLoading(false);
-}
+  return;
+}SD=data;MC=monteCarlo(SD.closes,SIMDAYS);addHistory(q,SD.name);renderStock();setLoading(false);}
 function quickSearch(name){document.getElementById('qinput').value=name;doSearch();}
 function addHistory(q,name){HISTORY=[{q,name},...HISTORY.filter(h=>h.q!==q)].slice(0,5);const bar=document.getElementById('history-bar');bar.innerHTML=HISTORY.map(h=>`<button onclick="document.getElementById('qinput').value='${h.q}';doSearch()" style="padding:3px 8px;border-radius:20px;border:1px solid #0d2535;background:#060f1a;color:#456070;font-size:9.5px;cursor:pointer">🕐 ${h.name}</button>`).join('');}
 function setLoading(on,msg){document.getElementById('loading-box').style.display=on?'block':'none';document.getElementById('error-box').style.display='none';document.getElementById('home-box').style.display=on?'none':'';if(SD&&!on)document.getElementById('home-box').style.display='none';document.getElementById('stock-box').style.display=(SD&&!on)?'block':'none';document.getElementById('search-btn').disabled=on;document.getElementById('search-btn').style.background=on?'#0d2535':'linear-gradient(135deg,#00b0ff,#00e5ff)';document.getElementById('search-btn').textContent=on?'로딩중':'🔍 검색';if(msg)document.getElementById('loading-msg').textContent=msg;}
-function showError(msg){
-
-  document.getElementById('err-msg').textContent = msg;
-
-  document.getElementById('error-box').style.display = 'block';
-}
 function totScY(v,mn,mx,h,pad=4){return h-pad-((v-mn)/(mx-mn||1))*(h-pad*2);}
 function mkSVGPath(pts){const v=pts.filter(p=>p&&!isNaN(p[1]));if(!v.length)return'';return v.map((p,i)=>`${i===0?'M':'L'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');}
 function buildGauge(sc){const c=Math.max(-100,Math.min(100,sc));const rad=((c/100*90-90)*Math.PI/180),cx=60,cy=52,r=40;const col=c>30?'#00e676':c>0?'#69f0ae':c>-30?'#ffd740':'#ff5252';const lbl=c>=50?'강한매수':c>=20?'매수':c>=-20?'중립':c>=-50?'매도':'강한매도';const nx=cx+r*Math.cos(rad),ny=cy+r*Math.sin(rad);return`<svg width="120" height="68" viewBox="0 0 120 68"><defs><linearGradient id="gg" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#ff5252"/><stop offset="50%" stop-color="#ffd740"/><stop offset="100%" stop-color="#00e676"/></linearGradient></defs><path d="M${cx-r},${cy} A${r},${r} 0 0,1 ${cx+r},${cy}" fill="none" stroke="#1a2a35" stroke-width="8"/><path d="M${cx-r},${cy} A${r},${r} 0 0,1 ${cx+r},${cy}" fill="none" stroke="url(#gg)" stroke-width="5" stroke-linecap="round"/><line x1="${cx}" y1="${cy}" x2="${nx.toFixed(1)}" y2="${ny.toFixed(1)}" stroke="${col}" stroke-width="2.5" stroke-linecap="round"/><circle cx="${cx}" cy="${cy}" r="3.5" fill="${col}"/><text x="${cx}" y="${cy+13}" text-anchor="middle" fill="${col}" font-size="9" font-weight="700">${lbl}</text></svg>`;}
