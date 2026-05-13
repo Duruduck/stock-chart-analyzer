@@ -181,6 +181,8 @@ function resolveTicker(q){
 }
 async function resolveKoreanName(q){
 
+  const startTime = Date.now();
+
   const url =
     `https://m.stock.naver.com/api/search/all?keyword=${encodeURIComponent(q)}`;
 
@@ -191,9 +193,15 @@ async function resolveKoreanName(q){
 
   for(const proxy of proxies){
 
+    // 전체 30초 초과
+    if(Date.now() - startTime > 30000){
+
+      throw new Error('timeout');
+    }
+
     try{
 
-      const resp = await fetchWithTimeout(proxy,5000);
+      const resp = await fetchWithTimeout(proxy,7000);
 
       if(!resp.ok) continue;
 
@@ -228,6 +236,7 @@ async function resolveKoreanName(q){
       return code + suffix;
 
     }catch(e){
+
       continue;
     }
   }
