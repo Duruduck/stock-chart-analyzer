@@ -122,6 +122,37 @@ const BASE_PRICES={
   'NVDA':110,'TSLA':240,'AAPL':210,'MSFT':420,'GOOGL':160,'META':560,'AMZN':190
 };
 function resolveTicker(q){const k=q.trim().toLowerCase().replace(/\s+/g,'');if(TMAP[k])return TMAP[k];for(const[key,val]of Object.entries(TMAP)){if(k.includes(key)||key.includes(k))return val;}if(/\.(KS|KQ)$/i.test(q.trim()))return q.trim().toUpperCase();if(/^[A-Za-z0-9]{5,6}$/.test(q.trim()))return q.trim().toUpperCase()+'.KS';return q.trim().toUpperCase();}
+async function resolveKoreanName(q) {
+  // 한글 포함 여부 확인
+  if(!/[가-힣]/.test(q)) return null;
+  // TMAP에 있으면 바로 반환
+  const fromMap = resolveTicker(q);
+  if(!fromMap.includes('[')) return fromMap; // 이미 해결된 경우
+
+  const enc = encodeURIComponent;
+  const url = `https://m.stock.naver.com/api/search/all?keyword=${enc(q)}&type=stock`;
+  const proxies = [
+    `https://api.allorigins.win/get?url=${enc(url)}`,
+    `https://corsproxy.io/?${enc(url)}`,
+  ];
+  for(const proxy of proxies) {
+    try {
+      const resp = await fetchWithTimeout(proxy, 5000);
+      if(!resp.ok) continue;
+      const wrapper = await resp.json();
+      const raw = wrapper.contents || wrapper;
+      const data = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      const items = data?.result?.stocks || data?.stocks || [];
+      if(!items.length) continue;
+      const code = items[0].itemCode || items[0].code;
+      const market = items[0].market || 'KOSPI';
+      if(!code) continue;
+      const suffix = market.includes('KOSDAQ') ? '.KQ' : '.KS';
+      return code + suffix;
+    } catch(e) { continue; }
+  }
+  return null;
+}
 function sma(d,p){return d.map((_,i)=>i<p-1?null:d.slice(i-p+1,i+1).reduce((s,v)=>s+v,0)/p);}
 function ema(d,p){const k=2/(p+1),r=[d[0]];for(let i=1;i<d.length;i++)r.push(d[i]*k+r[i-1]*(1-k));return r;}
 function rsi(d,p=14){const r=Array(p).fill(null);let ag=0,al=0;for(let i=1;i<=p;i++){const x=d[i]-d[i-1];x>0?ag+=x:al-=x;}ag/=p;al/=p;r.push(al===0?100:100-100/(1+ag/al));for(let i=p+1;i<d.length;i++){const x=d[i]-d[i-1];ag=(ag*(p-1)+Math.max(x,0))/p;al=(al*(p-1)+Math.max(-x,0))/p;r.push(al===0?100:100-100/(1+ag/al));}return r;}
@@ -183,7 +214,18 @@ let SHOW={candle:true,boll:true,sma5:true,sma20:false,sma60:false,cross:true};
 let HISTORY=[];
 function fmtP(v,isKr){if(v==null)return'-';if(isKr)return'₩'+Math.round(v).toLocaleString('ko-KR');return'$'+v.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});}
 function fmtL(v){if(v>=1000000)return(v/1000000).toFixed(2)+'M';if(v>=10000)return(v/10000).toFixed(0)+'만';if(v>=1000)return(v/1000).toFixed(1)+'k';return v.toFixed(2);}
-async function doSearch(){const q=document.getElementById('qinput').value.trim();if(!q)return;const ticker=resolveTicker(q);setLoading(true,'실제 주가 데이터 로딩 중...');let data=await tryFetchYahoo(ticker);if(!data){document.getElementByID('err-msg').textContent='데이터를 가져올 수 없어요. 코드로 검색해보세요';document.getElementByID('error-box').stype.display='block';setLoading(false);return;}SD=data;MC=monteCarlo(SD.closes,SIMDAYS);addHistory(q,SD.name);renderStock();setLoading(false);}
+async function doSearch(){const q=document.getElementById('qinput').value.trim();if(!q)return;setLoading(true,'종목 검색 중...');
+let ticker = resolveTicker(q);
+// 한글이고 TMAP에 없으면 네이버에서 코드 조회
+if(/[가-힣]/.test(q) && !Object.values(TMAP).includes(ticker)) {
+  const naverCode = await resolveKoreanName(q);
+  if(naverCode) ticker = naverCode;
+};setLoading(true,'실제 주가 데이터 로딩 중...');let data=await tryFetchYahoo(ticker);if(!data){
+  document.getElementById('err-msg').textContent='데이터를 가져올 수 없어요. 코드로 검색해보세요 (예: 270520)';
+  document.getElementById('error-box').style.display='block';
+  setLoading(false);
+  return;
+}SD=data;MC=monteCarlo(SD.closes,SIMDAYS);addHistory(q,SD.name);renderStock();setLoading(false);}
 function quickSearch(name){document.getElementById('qinput').value=name;doSearch();}
 function addHistory(q,name){HISTORY=[{q,name},...HISTORY.filter(h=>h.q!==q)].slice(0,5);const bar=document.getElementById('history-bar');bar.innerHTML=HISTORY.map(h=>`<button onclick="document.getElementById('qinput').value='${h.q}';doSearch()" style="padding:3px 8px;border-radius:20px;border:1px solid #0d2535;background:#060f1a;color:#456070;font-size:9.5px;cursor:pointer">🕐 ${h.name}</button>`).join('');}
 function setLoading(on,msg){document.getElementById('loading-box').style.display=on?'block':'none';document.getElementById('error-box').style.display='none';document.getElementById('home-box').style.display=on?'none':'';if(SD&&!on)document.getElementById('home-box').style.display='none';document.getElementById('stock-box').style.display=(SD&&!on)?'block':'none';document.getElementById('search-btn').disabled=on;document.getElementById('search-btn').style.background=on?'#0d2535':'linear-gradient(135deg,#00b0ff,#00e5ff)';document.getElementById('search-btn').textContent=on?'로딩중':'🔍 검색';if(msg)document.getElementById('loading-msg').textContent=msg;}
