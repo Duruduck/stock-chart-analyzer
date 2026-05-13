@@ -545,8 +545,16 @@ async function resolveKoreanName(query) {
     return data.symbol;
 
   } catch (err) {
-    console.error('resolveKoreanName error', err);
-    return null;
+
+  console.error(
+    'resolveKoreanName error',
+    err
+  );
+
+  throw new Error(
+    '종목 코드로 재시도 권'
+  );
+}
   }
 }
 let SD=null,MC=null,PERIOD=30,SIMDAYS=5;
@@ -577,7 +585,7 @@ async function doSearch(){
   
     if(!resolvedTicker){
   
-      showError('종목코드로 재시도 해주세.');
+      showError('종목코드로 재시도 권장');
   
       setLoading(false);
   
