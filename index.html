@@ -137,7 +137,39 @@ const BASE_PRICES={
   '323410.KS':35000,'051910.KS':380000,'207940.KS':950000,'012330.KS':280000,
   'NVDA':110,'TSLA':240,'AAPL':210,'MSFT':420,'GOOGL':160,'META':560,'AMZN':190
 };
-function resolveTicker(q){const k=q.trim().toLowerCase().replace(/\s+/g,'');if(TMAP[k])return TMAP[k];for(const[key,val]of Object.entries(TMAP)){if(k.includes(key)||key.includes(k))return val;}if(/\.(KS|KQ)$/i.test(q.trim()))return q.trim().toUpperCase();if(/^[A-Za-z0-9]{5,6}$/.test(q.trim()))return q.trim().toUpperCase()+'.KS';return q.trim().toUpperCase();}
+function resolveTicker(q){
+  const raw = q.trim();
+  const k = raw.toLowerCase().replace(/\s+/g,'');
+
+  // 매핑 우선
+  if(TMAP[k]) return TMAP[k];
+
+  for(const [key,val] of Object.entries(TMAP)){
+    if(k.includes(key) || key.includes(k)) return val;
+  }
+
+  // 이미 .KS/.KQ
+  if(/\.(KS|KQ)$/i.test(raw)){
+    return raw.toUpperCase();
+  }
+
+  // 숫자 6자리 → 한국주식
+  if(/^\d{6}$/.test(raw)){
+    return raw + '.KS';
+  }
+
+  // 미국 티커
+  if(/^[A-Za-z]{1,5}$/.test(raw)){
+    return raw.toUpperCase();
+  }
+
+  // 한글은 unresolved 상태 반환
+  if(/[가-힣]/.test(raw)){
+    return null;
+  }
+
+  return raw.toUpperCase();
+}
 async function resolveKoreanName(q){
 
   if(!/[가-힣]/.test(q)){
